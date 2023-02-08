@@ -87,6 +87,7 @@ def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
     x = layers.Dropout(dropout)(x)
     x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
     x = layers.LayerNormalization(epsilon=1e-6)(x)
+    
     return x + res
 
 
@@ -117,10 +118,13 @@ def build_model(
         x = transformer_encoder(x, head_size, num_heads, ff_dim, dropout)
 
     x = layers.GlobalAveragePooling1D(data_format="channels_first")(x)
+    
     for dim in mlp_units:
         x = layers.Dense(dim, activation="relu")(x)
         x = layers.Dropout(mlp_dropout)(x)
+        
     outputs = layers.Dense(n_classes, activation="softmax")(x)
+    
     return keras.Model(inputs, outputs)
 
 
