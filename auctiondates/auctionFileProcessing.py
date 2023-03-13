@@ -366,7 +366,7 @@ if __name__ == '__main__':
     #pd20YAuctionTail = pdGetSingleAuction (pdAuctionTail, 20)
 
     #sFileNameAll = "C:/dev/data/UST Auction All Data_20221012.csv"
-    sFileNameAll = "UST Auction All Data_20230214.csv"
+    sFileNameAll = "UST Auction All Data_20230313.csv"
 
     pdAuctionData = loadJPMFullAuctionTable (sFileNameAll)
     pdAuctionData2 = pdGetOneAuctionResults (pdAuctionData, 2)
