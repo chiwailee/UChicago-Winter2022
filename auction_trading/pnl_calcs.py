@@ -31,10 +31,10 @@ def calc_single_trade(
     # Calculate PnL using multiplier of 10_000 for each 1bp change in spread.
     # Use the first value of days_before and last value of days_below to calculate the slope.
     # NOTE: Not sure if this is the correct calculation.
-    before_pnl = (before.iloc[0] - before.iloc[-1]) * multiplier
+    before_pnl = (before.iloc[-1] - before.iloc[0]) * multiplier
 
     # Now, bet on flattening of the curve for days after.
-    after_pnl = (after.iloc[-1] - after.iloc[0]) * multiplier
+    after_pnl = (after.iloc[0] - after.iloc[-1]) * multiplier
 
     try:
         return before_pnl[0], after_pnl[0]
@@ -132,27 +132,31 @@ def plot_single_trade(
 
     fig, ax = plt.subplots(figsize=(16, 9))
 
-    # Calculate before/after dates.
+    # Plot the spread.
     days_before, days_after = calc_n_prior(spread, auction_date, n)
 
-    # Plot the spread.
-    days_before.plot(ax=ax, label="Before Auction")
-    days_after.plot(ax=ax, label="After Auction")
+    # Concat the two series.
+    days_before = pd.concat([days_before, days_after])
+
+    # Plot the series.
+    days_before.plot(ax=ax, label="Spread")
 
     # Add vertical line at auction date.
     # Make the auction date at 1pm
     auction_date = auction_date.replace(hour=13, minute=0, second=0, microsecond=0)
     ax.axvline(auction_date, color="red", linestyle="--", label="Auction Date")
 
-    # Add legend.
+    # Calculate PnL.
+    before_pnl, after_pnl = calc_slope_curve(spread, auction_date, n)
+
+    # Add one label for the PnL before auction
+    ax.text(.2, .99, f'PnL Before: ${before_pnl:,.2f}\nPnL After: ${after_pnl:,.2f}', ha='left', va='top', transform=ax.transAxes)
+
     ax.legend()
 
-    # Add title.
     ax.set_title(f"Spread for {n} Days Before and After Auction Date")
 
-    # Add labels.
     ax.set_xlabel("Date")
     ax.set_ylabel("Spread (bp)")
 
-    # Show plot.
     plt.show()
