@@ -11,8 +11,9 @@ from typing import Union, Tuple, Iterable
 import pandas as pd
 import matplotlib.pyplot as plt
 
+
 # Import utils for date slicing.
-from auction_trading.utils import calc_n_prior, calc_n_prior_generator
+from auction_trading.utils import calc_n_prior, calc_n_prior_generator, Number
 
 
 def calc_single_trade(
@@ -45,7 +46,9 @@ def calc_single_trade(
 def calc_slope_curve(
     spread: Union[pd.DataFrame, pd.Series],
     auction_date: pd.Timestamp,
-    n: int,
+    n: Number = None,
+    n_prev: Number = None,
+    n_post: Number = None,
     multiplier: int = 10_000,
 ) -> Tuple[float, float]:
     """
@@ -60,14 +63,16 @@ def calc_slope_curve(
              shorting the spread for n days after the auction.
     """
 
-    days_before, days_after = calc_n_prior(spread, auction_date, n)
+    days_before, days_after = calc_n_prior(spread, auction_date, n, n_prev, n_post)
     return calc_single_trade(days_before, days_after, multiplier)
 
 
 def calc_all_trades(
     spread: Union[pd.DataFrame, pd.Series],
     auction_dates: Iterable[pd.Timestamp],
-    n: int,
+    n: Number = None,
+    n_prev: Number = None,
+    n_post: Number = None,
     multiplier: int = 10_000,
 ) -> pd.DataFrame:
     """
@@ -88,7 +93,7 @@ def calc_all_trades(
     exit_at_post = []
 
     # Iterate through each auction date
-    for p, a in calc_n_prior_generator(spread, auction_dates, n):
+    for p, a in calc_n_prior_generator(spread, auction_dates, n, n_prev, n_post):
         # Calculate PnL
         prior_pnl, after_pnl = calc_single_trade(p, a, multiplier)
 
@@ -119,8 +124,64 @@ def calc_all_trades(
     )
 
 
+def optimize_entry_time(
+    spread: Union[pd.DataFrame, pd.Series],
+    auction_dates: Iterable[pd.Timestamp],
+    symmetric: bool = True,
+    multiplier: int = 10_000,
+) -> Number:
+    """
+    Calculate optimal entry and exit time for the spread in the pre/post auction period.
+    :param spread: Spread to trade.
+    :param auction_dates: DataFrame containing auction dates.
+    :param symmetric: If True, use the same number of days before and after the auction.
+    :param multiplier:  Multiplier to use for PnL calculation.
+    :return: n that maximizes PnL.
+    """
+    import scipy
+
+    def _calc_pnl(
+        spread, auction_dates, n=None, n_prev=None, n_post=None, multiplier=None
+    ):
+        df = calc_all_trades(spread, auction_dates, n, n_prev, n_post, multiplier)
+        return df["Pre-Auction PnL"].sum() + df["Post-Auction PnL"].sum()
+
+    from functools import partial
+
+    if symmetric:
+        _calc_pnl_partial = partial(
+            _calc_pnl,
+            spread,
+            auction_dates,
+            n_prev=None,
+            n_post=None,
+            multiplier=multiplier,
+        )
+        res = scipy.optimize.minimize_scalar(
+            lambda n: -_calc_pnl_partial(n),
+            bounds=(1, 20),
+            method="bounded",
+        ).x
+    else:
+        # TODO: Fix this to work with asymmetric entry/exit times.
+        _calc_pnl_partial = partial(
+            _calc_pnl, spread, auction_dates, n=None, multiplier=multiplier
+        )
+        res = scipy.optimize.minimize_scalar(
+            lambda n_prev, n_post: -_calc_pnl_partial(n_prev, n_post),
+            bounds=((1, 1), (20, 20)),
+            method="bounded",
+        ).x
+
+    print(
+        f"Optimal entry time: {res:,.2f} days before the auction. Pnl: ${_calc_pnl_partial(res):,.2f}"
+    )
+
+    return res
+
+
 def plot_single_trade(
-    spread: Union[pd.DataFrame, pd.Series], auction_date: pd.Timestamp, n: int
+    spread: Union[pd.DataFrame, pd.Series], auction_date: pd.Timestamp, n: Number
 ) -> None:
     """
     Plot the spread for n days before and after the auction. Include a vertical line at the auction date.
@@ -150,7 +211,14 @@ def plot_single_trade(
     before_pnl, after_pnl = calc_slope_curve(spread, auction_date, n)
 
     # Add one label for the PnL before auction
-    ax.text(.2, .99, f'PnL Before: ${before_pnl:,.2f}\nPnL After: ${after_pnl:,.2f}', ha='left', va='top', transform=ax.transAxes)
+    ax.text(
+        0.2,
+        0.99,
+        f"PnL Before: ${before_pnl:,.2f}\nPnL After: ${after_pnl:,.2f}",
+        ha="left",
+        va="top",
+        transform=ax.transAxes,
+    )
 
     ax.legend()
 
