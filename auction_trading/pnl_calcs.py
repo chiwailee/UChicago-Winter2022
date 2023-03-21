@@ -53,7 +53,7 @@ def calc_slope_curve(
 ) -> Tuple[float, float]:
     """
     Calculate PnL from buying (?) the spread n days before the auction. Then, assume position is closed
-    1 minute before the auction, simultaneously hort the spread (bet on flattening). Close the
+    1 minute before the auction, simultaneously short the spread (bet on flattening). Close the
     position n days after the auction.
     :param spread: Spread to trade.
     :param auction_date: Date of auction.
@@ -129,7 +129,7 @@ def optimize_entry_time(
     auction_dates: Iterable[pd.Timestamp],
     symmetric: bool = True,
     multiplier: int = 10_000,
-) -> Number:
+) -> Union[Number, Tuple[Number, Number]]:
     """
     Calculate optimal entry and exit time for the spread in the pre/post auction period.
     :param spread: Spread to trade.
@@ -140,21 +140,18 @@ def optimize_entry_time(
     """
     import scipy
 
-    def _calc_pnl(
-        spread, auction_dates, n=None, n_prev=None, n_post=None, multiplier=None
-    ):
-        df = calc_all_trades(spread, auction_dates, n, n_prev, n_post, multiplier)
-        return df["Pre-Auction PnL"].sum() + df["Post-Auction PnL"].sum()
-
     from functools import partial
 
     if symmetric:
+
+        def _calc_pnl(spread, auction_dates, n=None, multiplier=None):
+            df = calc_all_trades(spread, auction_dates, n, multiplier)
+            return df["Pre-Auction PnL"].sum() + df["Post-Auction PnL"].sum()
+
         _calc_pnl_partial = partial(
             _calc_pnl,
             spread,
             auction_dates,
-            n_prev=None,
-            n_post=None,
             multiplier=multiplier,
         )
         res = scipy.optimize.minimize_scalar(
@@ -162,22 +159,42 @@ def optimize_entry_time(
             bounds=(1, 20),
             method="bounded",
         ).x
-    else:
-        # TODO: Fix this to work with asymmetric entry/exit times.
-        _calc_pnl_partial = partial(
-            _calc_pnl, spread, auction_dates, n=None, multiplier=multiplier
+        print(
+            f"Optimal entry/exit time: {res:,.2f} days before/after the auction. Pnl: ${_calc_pnl_partial(res):,.2f}"
         )
-        res = scipy.optimize.minimize_scalar(
-            lambda n_prev, n_post: -_calc_pnl_partial(n_prev, n_post),
-            bounds=((1, 1), (20, 20)),
+    else:
+
+        def _calc_pnl(
+            spread, auction_dates, n=None, multiplier=None, col="Pre-Auction PnL"
+        ):
+            df = calc_all_trades(spread, auction_dates, n, multiplier)
+            return df[col].sum()
+
+        _calc_pnl_partial = partial(
+            _calc_pnl, spread, auction_dates, multiplier=multiplier
+        )
+        res_pre = scipy.optimize.minimize_scalar(
+            lambda n: -_calc_pnl_partial(n, col="Pre-Auction PnL"),
+            bounds=(1, 20),
             method="bounded",
         ).x
 
-    print(
-        f"Optimal entry time: {res:,.2f} days before the auction. Pnl: ${_calc_pnl_partial(res):,.2f}"
-    )
+        _calc_pnl_partial = partial(
+            _calc_pnl, spread, auction_dates, multiplier=multiplier
+        )
+        res_post = scipy.optimize.minimize_scalar(
+            lambda n: -_calc_pnl_partial(n, col="Post-Auction PnL"),
+            bounds=(1, 20),
+            method="bounded",
+        ).x
 
-    return res
+        print(
+            f"Optimal entry/exit time: {res_pre:,.2f} days before the "
+            f"auction and {res_post:,.2f} days after the auction.\n"
+            f"Pnl before auction: ${_calc_pnl_partial(res_pre, col='Pre-Auction PnL'):,.2f}.\n"
+            f"Pnl after auction: ${_calc_pnl_partial(res_post, col='Post-Auction PnL'):,.2f}."
+        )
+        return res_pre, res_post
 
 
 def plot_single_trade(
