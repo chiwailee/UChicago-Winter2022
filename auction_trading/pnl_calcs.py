@@ -10,7 +10,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import scipy
-from typing import Union, Tuple, Sequence, Iterable
+from typing import Union, Tuple, Sequence, Iterable, List, Callable
 from functools import partial
 
 # Import utils for date slicing.
@@ -34,7 +34,7 @@ def calc_steepener(
 
 
 def calc_flattener(
-    spread: Union[pd.DataFrame, pd.Series], multiplier: int = 10_000
+    spread: Union[pd.DataFrame, pd.Series], multiplier: int = 10_000,
 ) -> Number:
     """
     Calculate the flattener for the given spread.
@@ -52,7 +52,7 @@ def calc_single_trade(
     before: Union[pd.DataFrame, pd.Series],
     after: Union[pd.DataFrame, pd.Series],
     multiplier: int = 10_000,
-    trades: Sequence[str, str] = ("steepener", "flattener"),
+    trades: Union[List[str], Tuple[str]] = ("steepener", "flattener"),
 ) -> Tuple[float, float]:
     """
     Calculate the PnL for the spread.
@@ -70,7 +70,7 @@ def calc_single_trade(
     assert trades[0] in ("steepener", "flattener") and trades[1] in (
         "steepener",
         "flattener",
-    )
+    ), "Trades must be either 'steepener' or 'flattener'."
 
     # Calculate PnL for pre-auction.
     if trades[0] == "steepener":
@@ -96,7 +96,7 @@ def calc_slope_curve(
     n_prev: Number = None,
     n_post: Number = None,
     multiplier: int = 10_000,
-    trades: Sequence[str, str] = ("steepener", "flattener"),
+    trades: Union[List[str], Tuple[str]] = ("steepener", "flattener"),
 ) -> Tuple[float, float]:
     """
     Calculate PnL from buying (?) the spread n days before the auction. Then, assume position is closed
@@ -117,11 +117,10 @@ def calc_slope_curve(
 
 def calc_all_trades(
     spread: Union[pd.DataFrame, pd.Series],
-    auction_dates: Iterable[pd.Timestamp],
-    n: Number = None,
-    n_prev: Number = None,
-    n_post: Number = None,
+    auction_dates: Union[Iterable[pd.Timestamp], pd.DatetimeIndex, pd.DataFrame],
+    n: Union[Tuple[Number, Number], Number],
     multiplier: int = 10_000,
+    trade_rule: Callable = lambda x: ("steepener", "flattener"),
 ) -> pd.DataFrame:
     """
     Calculate the PnL for each auction date.
@@ -132,6 +131,19 @@ def calc_all_trades(
     :return: DataFrame containing PnL for each auction date.
     """
 
+    if isinstance(n, tuple):
+        n_prev, n_post = n
+        n = None
+    else:
+        n_prev, n_post = None, None
+
+    if isinstance(auction_dates, pd.DataFrame):
+        auction_features = auction_dates.copy()['bond_series']
+        auction_dates = list(auction_features.index)
+
+    else:
+        auction_features = None
+
     # PnL lists.
     prior = []
     after = []
@@ -141,9 +153,14 @@ def calc_all_trades(
     exit_at_post = []
 
     # Iterate through each auction date
-    for p, a in calc_n_prior_generator(spread, auction_dates, n, n_prev, n_post):
+    for idx, (p, a) in enumerate(calc_n_prior_generator(spread, auction_dates, n, n_prev, n_post, auction_features)):
         # Calculate PnL
-        prior_pnl, after_pnl = calc_single_trade(p, a, multiplier)
+        if auction_features is not None:
+            trades = trade_rule(auction_features.iloc[idx])
+        else:
+            trades = ('steepener', 'flattener')
+
+        prior_pnl, after_pnl = calc_single_trade(p, a, multiplier, trades)
 
         # Append PnL to list
         prior.append(prior_pnl)
@@ -174,9 +191,10 @@ def calc_all_trades(
 
 def optimize_entry_time(
     spread: Union[pd.DataFrame, pd.Series],
-    auction_dates: Iterable[pd.Timestamp],
+    auction_dates: Union[Iterable[pd.Timestamp], pd.DatetimeIndex, pd.DataFrame],
     symmetric: bool = True,
     multiplier: int = 10_000,
+    trade_rule: Callable = lambda x: ("steepener", "flattener"),
 ) -> Union[Number, Tuple[Number, Number]]:
     """
     Calculate optimal entry and exit time for the spread in the pre- / post-auction period.
@@ -189,8 +207,8 @@ def optimize_entry_time(
 
     if symmetric:
         # Calculate PnL for both pre- and post-auction periods.
-        def _calc_pnl(spread, auction_dates, n=None, multiplier=None):
-            df = calc_all_trades(spread, auction_dates, n, multiplier)
+        def _calc_pnl(spread, auction_dates, n=None, multiplier=None, trade_rule=trade_rule):
+            df = calc_all_trades(spread, auction_dates, n, multiplier, trade_rule)
             return df["Pre-Auction PnL"].sum() + df["Post-Auction PnL"].sum()
 
         # Partially evaluate _calc_pnl to use in scipy.optimize.minimize_scalar
@@ -199,6 +217,7 @@ def optimize_entry_time(
             spread,
             auction_dates,
             multiplier=multiplier,
+            trade_rule=trade_rule,
         )
         # Optimize for PnL.
         res = scipy.optimize.minimize_scalar(
@@ -210,18 +229,19 @@ def optimize_entry_time(
         print(
             f"Optimal entry/exit time: {res:,.2f} days before/after the auction. Pnl: ${_calc_pnl_partial(res):,.2f}"
         )
+        return res
     else:
         # Calculate PnL for either pre- or post-auction period.
         # NOTE: there is redundant computation here, so this could be refactored.
         def _calc_pnl(
-            spread, auction_dates, n=None, multiplier=None, col="Pre-Auction PnL"
+            spread, auction_dates, n=None, multiplier=None, trade_rule=trade_rule, col="Pre-Auction PnL"
         ):
-            df = calc_all_trades(spread, auction_dates, n, multiplier)
+            df = calc_all_trades(spread, auction_dates, n, multiplier, trade_rule)
             return df[col].sum()
 
         # Partially evaluate _calc_pnl to use in scipy.optimize.minimize_scalar
         _calc_pnl_partial = partial(
-            _calc_pnl, spread, auction_dates, multiplier=multiplier
+            _calc_pnl, spread, auction_dates, multiplier=multiplier, trade_rule=trade_rule
         )
         # Optimal pre-auction entry time.
         res_pre = scipy.optimize.minimize_scalar(

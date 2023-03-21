@@ -7,7 +7,7 @@
 # Date: 2022-03-16
 # ------------------------------------
 
-from typing import Union, Tuple, Iterable
+from typing import Union, Tuple, Iterable, Sequence
 import pandas as pd
 from numpy import number
 
@@ -39,6 +39,7 @@ def calc_n_prior(
     n: Number = None,
     n_prev: Number = None,
     n_post: Number = None,
+    bond_series: Sequence[str] = None,
 ) -> Tuple[Union[pd.Series, pd.DataFrame], Union[pd.Series, pd.DataFrame]]:
     """
     Calculate the n days prior to the auction date. Ideally, split it at 1pm on the auction, since
@@ -55,12 +56,34 @@ def calc_n_prior(
     """
 
     # Set the time of auction date to 12:59:59
-
     assert n is not None or (
         n_prev is not None and n_post is not None
     ), "n cannot be None if n_prev and n_post are None"
 
-    auction_date_prior = auction_date.replace(hour=12, minute=59, second=59)
+    if bond_series is not None:
+        # Temporary fix for 2Y and 5Y auctions
+        # This probably needs to be refactored.
+        if len(bond_series) == 2:
+            auction_date_morning = auction_date.replace(hour=11, minute=29, second=59)
+            auction_date_afternoon = auction_date.replace(hour=12, minute=59, second=59)
+
+            # Split n_days_prior_data to be n_days before the first auction
+            if n is not None:
+                n_days_prior, _ = _calc_n_prior_symmetric(spread, auction_date_morning, n)
+                n_days_after, _ = _calc_n_prior_symmetric(spread, auction_date_afternoon, n)
+                return n_days_prior, n_days_after
+            else:
+                n_days_prior, _ = _calc_n_prior_symmetric(
+                    spread, auction_date_morning, n_prev
+                )
+                _, n_days_after = _calc_n_prior_symmetric(
+                    spread, auction_date_afternoon, n_post
+                )
+                return n_days_prior, n_days_after
+        else:
+            auction_date_prior = auction_date.replace(hour=12, minute=59, second=59)
+    else:
+        auction_date_prior = auction_date.replace(hour=12, minute=59, second=59)
 
     if n is not None:
         return _calc_n_prior_symmetric(spread, auction_date_prior, n)
@@ -79,6 +102,7 @@ def calc_n_prior_generator(
     n: Number = None,
     n_prev: Number = None,
     n_post: Number = None,
+    bond_series: pd.Series = None,
 ) -> Iterable[Tuple[Union[pd.Series, pd.DataFrame], Union[pd.Series, pd.DataFrame]]]:
     """
     Generator to calculate the n days prior to the auction date. Ideally, split it at 1pm on the auction, since
@@ -90,13 +114,24 @@ def calc_n_prior_generator(
     :param n: Number of days to return prior to the auction.
     :param n_prev: Number of days to return prior to the auction.
     :param n_post: Number of days to return after the auction.
+    :param bond_series: Series containing the bond series (auctions on that day).
     :return: Tuple containing the data n days before and n days after the auction.
     """
 
-    # Iterate through each auction date
-    for date in auction_dates:
-        # Calculate the n days prior to the auction date
-        n_days_prior_data, n_days_after_data = calc_n_prior(
-            spread, date, n, n_prev, n_post
-        )
-        yield n_days_prior_data, n_days_after_data
+    if bond_series is not None:
+        # Iterate through each auction date
+        for idx, date in enumerate(auction_dates):
+            # Calculate the n days prior to the auction date
+            n_days_prior_data, n_days_after_data = calc_n_prior(
+                spread, date, n, n_prev, n_post, bond_series.loc[date]
+            )
+            yield n_days_prior_data, n_days_after_data
+
+    else:
+        # Iterate through each auction date
+        for date in auction_dates:
+            # Calculate the n days prior to the auction date
+            n_days_prior_data, n_days_after_data = calc_n_prior(
+                spread, date, n, n_prev, n_post
+            )
+            yield n_days_prior_data, n_days_after_data
