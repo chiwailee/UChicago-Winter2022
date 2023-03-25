@@ -222,7 +222,7 @@ def optimize_entry_time(
         # Optimize for PnL.
         res = scipy.optimize.minimize_scalar(
             lambda n: -_calc_pnl_partial(n),
-            bounds=(1, 20),
+            bounds=(1, 5),
             method="bounded",
         ).x
         # Print results.
@@ -246,14 +246,14 @@ def optimize_entry_time(
         # Optimal pre-auction entry time.
         res_pre = scipy.optimize.minimize_scalar(
             lambda n: -_calc_pnl_partial(n, col="Pre-Auction PnL"),
-            bounds=(1, 20),
+            bounds=(1, 5),
             method="bounded",
         ).x
 
         # Optimal post-auction exit time.
         res_post = scipy.optimize.minimize_scalar(
             lambda n: -_calc_pnl_partial(n, col="Post-Auction PnL"),
-            bounds=(1, 20),
+            bounds=(1, 5),
             method="bounded",
         ).x
 
